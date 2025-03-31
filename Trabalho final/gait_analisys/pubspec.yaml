@@ -1,0 +1,37 @@
+name: gait_analisys
+description: "A new Flutter project."
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.4.4 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  firebase_core: ^3.6.0
+  firebase_auth: ^5.3.1
+  firebase_database: ^11.1.4
+  intl: ^0.20.2
+  url_launcher: ^6.1.7
+  signature: ^5.5.0
+  qr_flutter: ^4.1.0
+  uuid: ^4.5.1
+  app_links: ^6.3.2
+  pdf: ^3.9.0
+  printing: ^5.10.4
+  firebase_auth_web: ^5.8.13
+  cupertino_icons: ^1.0.6
+  flutter_blue: ^0.8.0
+  
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/images/logo.jpg
+    - assets/images/ufu.png
