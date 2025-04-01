@@ -17,7 +17,8 @@ class _WelcomePageState extends State<WelcomePage> {
   final DatabaseReference _databaseReference = FirebaseDatabase.instance.ref();
   String userName = 'Usuário';
   bool? isConnected;
-  final String espIP = "192.168.3.19"; // Atualize se necessário
+  // Atualize com o IP do seu ESP32 na rede Wi‑Fi
+  final String espIP = "192.168.3.19";
 
   // Variáveis para os dados do ESP
   double? yaw, pitch, roll, ax, ay, az;
@@ -28,6 +29,7 @@ class _WelcomePageState extends State<WelcomePage> {
     _loadUserData();
   }
 
+  // Carrega o nome do usuário a partir do Firebase
   void _loadUserData() {
     User? user = _auth.currentUser;
     if (user != null) {
@@ -41,11 +43,17 @@ class _WelcomePageState extends State<WelcomePage> {
             userName =
                 event.snapshot.child('name').value as String? ?? 'Usuário';
           });
+        } else {
+          setState(() {
+            userName = 'Usuário desconhecido';
+          });
         }
       });
     }
   }
 
+  // Tenta conectar ao ESP32 via Wi‑Fi através de uma requisição HTTP
+  // e envia os dados obtidos para o Firebase criando uma nova linha na tabela "sensor_data"
   Future<void> _connectToESP() async {
     try {
       final response = await http.get(Uri.parse("http://$espIP/imu"));
@@ -64,6 +72,20 @@ class _WelcomePageState extends State<WelcomePage> {
           ay = data['ay'];
           az = data['az'];
         });
+
+        // Cria um registro com os dados do sensor
+        final sensorData = {
+          "timestamp": DateTime.now().millisecondsSinceEpoch,
+          "yaw": yaw,
+          "pitch": pitch,
+          "roll": roll,
+          "ax": ax,
+          "ay": ay,
+          "az": az,
+        };
+
+        // Envia os dados para o Firebase, criando uma nova linha
+        _databaseReference.child("sensor_data").push().set(sensorData);
       } else {
         setState(() => isConnected = false);
       }
@@ -73,6 +95,7 @@ class _WelcomePageState extends State<WelcomePage> {
     }
   }
 
+  // Realiza logout e retorna para a tela de login
   Future<void> _logout() async {
     await _auth.signOut();
     Navigator.pushReplacement(
@@ -100,6 +123,7 @@ class _WelcomePageState extends State<WelcomePage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      // Fundo com gradiente para manter o estilo elegante
       body: Container(
         decoration: const BoxDecoration(
           gradient: LinearGradient(
@@ -110,6 +134,7 @@ class _WelcomePageState extends State<WelcomePage> {
         ),
         child: Stack(
           children: [
+            // AppBar customizado (transparente) com botão de logout
             Positioned(
               top: 0,
               left: 0,
@@ -135,6 +160,7 @@ class _WelcomePageState extends State<WelcomePage> {
                 ],
               ),
             ),
+            // Conteúdo centralizado em card semitransparente
             Center(
               child: SingleChildScrollView(
                 child: Container(
