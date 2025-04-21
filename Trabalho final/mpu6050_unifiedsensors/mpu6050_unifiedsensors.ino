@@ -170,8 +170,8 @@ void setup() {
   // Configura os endpoints do servidor HTTP
   server.on("/", HTTP_GET, handleRoot);
   server.on("/", HTTP_OPTIONS, handleOptions);
-  server.on("/imu1", HTTP_GET, handleIMU);
-  server.on("/imu1", HTTP_OPTIONS, handleOptions);
+  server.on("/imu", HTTP_GET, handleIMU);
+  server.on("/imu", HTTP_OPTIONS, handleOptions);
   
   server.begin();
   Serial.println("Servidor HTTP iniciado, aguardando conexões...");
@@ -181,5 +181,4 @@ void setup() {
 
 void loop() {
   server.handleClient();
-  delay(10);
 }

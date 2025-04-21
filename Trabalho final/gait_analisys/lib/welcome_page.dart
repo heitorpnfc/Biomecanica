@@ -1,10 +1,30 @@
 import 'dart:async';
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_database/firebase_database.dart';
 import 'package:http/http.dart' as http;
-import 'dart:convert';
+
 import 'login_page.dart';
+
+void main() {
+  runApp(const MyApp());
+}
+
+class MyApp extends StatelessWidget {
+  const MyApp({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: 'IMU Sensor Streaming',
+      debugShowCheckedModeBanner: false,
+      theme: ThemeData(primarySwatch: Colors.blue),
+      home: const WelcomePage(),
+    );
+  }
+}
 
 class WelcomePage extends StatefulWidget {
   const WelcomePage({super.key});
@@ -15,86 +35,125 @@ class WelcomePage extends StatefulWidget {
 
 class _WelcomePageState extends State<WelcomePage> {
   final FirebaseAuth _auth = FirebaseAuth.instance;
-  final DatabaseReference _databaseReference = FirebaseDatabase.instance.ref();
+  final DatabaseReference _db = FirebaseDatabase.instance.ref();
+
+  // URLs dos dois ESPs
+  final String espURL1 = "http://192.168.3.19/imu";
+  final String espURL2 = "http://192.168.3.21/imu2";
+
+  // Intervalo de amostragem em ms
+  final int aqTime = 10;
+  // Intervalo de atualização do ângulo em ms (700 ms)
+  final int angleUpdateIntervalMs = 700;
+
+  // Timer para streaming e para ângulo
+  Timer? _streamTimer;
+  Timer? _angleTimer;
+
+  // Cliente HTTP único
+  late final http.Client _client;
+
+  // Dados YPR dos dois sensores
+  double? yaw1, pitch1, roll1;
+  double? yaw2, pitch2, roll2;
+
+  // Último ângulo calculado
+  double? kneeAngle;
+
+  // Nome do usuário
   String userName = 'Usuário';
   bool? isConnected;
-
-  // IP do ESP e intervalo de amostragem (ms)
-  final String espIP = "192.168.3.19";
-  final int aqTime = 100;
-
-  // Timer para chamadas periódicas
-  Timer? _timer;
-
-  // Variáveis YPR
-  double? yaw, pitch, roll;
 
   @override
   void initState() {
     super.initState();
+    _client = http.Client();
     _loadUserData();
   }
 
   @override
   void dispose() {
-    _timer?.cancel();
+    _streamTimer?.cancel();
+    _angleTimer?.cancel();
+    _client.close();
     super.dispose();
   }
 
   void _loadUserData() {
     final user = _auth.currentUser;
     if (user != null) {
-      _databaseReference
-          .child('users/colaboradores')
-          .child(user.uid)
-          .once()
-          .then((event) {
-        final snap = event.snapshot;
+      _db.child('users/colaboradores').child(user.uid).once().then((e) {
         setState(() {
-          userName = snap.exists
-              ? (snap.child('name').value as String? ?? 'Usuário')
-              : 'Usuário desconhecido';
+          userName = e.snapshot.exists
+              ? (e.snapshot.child('name').value as String? ?? 'Usuário')
+              : 'Usuário';
         });
       });
     }
   }
 
-  Future<void> _connectToESP() async {
+  Future<void> _fetchBothIMUs() async {
     try {
-      final response = await http.get(Uri.parse("http://$espIP/imu1"));
-      if (response.statusCode == 200) {
-        setState(() => isConnected = true);
-        final data = json.decode(response.body) as Map<String, dynamic>;
+      final responses = await Future.wait([
+        _client.get(Uri.parse(espURL1)),
+        _client.get(Uri.parse(espURL2)),
+      ]);
+
+      if (responses[0].statusCode == 200 && responses[1].statusCode == 200) {
+        final data1 = json.decode(responses[0].body) as Map<String, dynamic>;
+        final data2 = json.decode(responses[1].body) as Map<String, dynamic>;
+
         setState(() {
-          yaw = (data['yaw'] as num).toDouble();
-          pitch = (data['pitch'] as num).toDouble();
-          roll = (data['roll'] as num).toDouble();
+          yaw1 = (data1['yaw'] as num).toDouble();
+          pitch1 = (data1['pitch'] as num).toDouble();
+          roll1 = (data1['roll'] as num).toDouble();
+          yaw2 = (data2['yaw'] as num).toDouble();
+          pitch2 = (data2['pitch'] as num).toDouble();
+          roll2 = (data2['roll'] as num).toDouble();
+          isConnected = true;
         });
-        // Grava no Firebase
-        _databaseReference.child("sensor_data").push().set({
-          "timestamp": DateTime.now().millisecondsSinceEpoch,
-          "yaw": yaw,
-          "pitch": pitch,
-          "roll": roll,
+
+        final timestamp = DateTime.now().millisecondsSinceEpoch;
+        _db.child('sensor_data').child('$timestamp').set({
+          'yaw1': yaw1,
+          'pitch1': pitch1,
+          'roll1': roll1,
+          'yaw2': yaw2,
+          'pitch2': pitch2,
+          'roll2': roll2,
         });
       } else {
         setState(() => isConnected = false);
       }
     } catch (e) {
       setState(() => isConnected = false);
-      debugPrint("Erro ao conectar ao ESP32: $e");
+      debugPrint('Erro ao buscar IMUs: $e');
     }
   }
 
   void _startStreaming() {
-    // evita múltiplos timers
-    if (_timer != null && _timer!.isActive) return;
-    // imediatamente busca uma vez...
-    _connectToESP();
-    // ...e depois periodicamente
-    _timer = Timer.periodic(Duration(milliseconds: aqTime), (_) {
-      _connectToESP();
-    });
+    if (_streamTimer?.isActive ?? false) return;
+
+    // chama imediatamente
+    _fetchBothIMUs();
+
+    // timer periódico de leitura IMU
+    _streamTimer = Timer.periodic(
+      Duration(milliseconds: aqTime),
+      (_) => _fetchBothIMUs(),
+    );
+
+    // timer periódico de cálculo de ângulo
+    _angleTimer = Timer.periodic(
+      Duration(milliseconds: angleUpdateIntervalMs),
+      (_) {
+        if (pitch1 != null && pitch2 != null) {
+          setState(() {
+            kneeAngle = (pitch1! - pitch2!).abs();
+          });
+        }
+      },
+    );
   }
 
   Future<void> _logout() async {
@@ -185,7 +244,7 @@ class _WelcomePageState extends State<WelcomePage> {
                       isConnected == true ? Icons.check_circle : Icons.cancel,
                       color: isConnected == true ? Colors.green : Colors.red,
                     ),
-                    label: const Text("Conectar ESP",
+                    label: const Text("Conectar ESPs",
                         style: TextStyle(fontSize: 18)),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.blueAccent,
@@ -197,12 +256,10 @@ class _WelcomePageState extends State<WelcomePage> {
                   ),
                   const SizedBox(height: 30),
                   if (isConnected == true) ...[
-                    const Text(
-                      "Dados do Sensor (MPU6050):",
-                      style:
-                          TextStyle(fontSize: 20, fontWeight: FontWeight.w600),
-                    ),
-                    const SizedBox(height: 16),
+                    const Text("Sensor 1 (Coxa):",
+                        style: TextStyle(
+                            fontSize: 20, fontWeight: FontWeight.w600)),
+                    const SizedBox(height: 8),
                     Table(
                       columnWidths: const {
                         0: FlexColumnWidth(2),
@@ -210,10 +267,37 @@ class _WelcomePageState extends State<WelcomePage> {
                       },
                       border: TableBorder.all(color: Colors.black12),
                       children: [
-                        buildDataRow("Yaw (°)", yaw),
-                        buildDataRow("Pitch (°)", pitch),
-                        buildDataRow("Roll (°)", roll),
+                        buildDataRow("Yaw1 (°)", yaw1),
+                        buildDataRow("Pitch1 (°)", pitch1),
+                        buildDataRow("Roll1 (°)", roll1),
                       ],
+                    ),
+                    const SizedBox(height: 16),
+                    const Text("Sensor 2 (Canela):",
+                        style: TextStyle(
+                            fontSize: 20, fontWeight: FontWeight.w600)),
+                    const SizedBox(height: 8),
+                    Table(
+                      columnWidths: const {
+                        0: FlexColumnWidth(2),
+                        1: FlexColumnWidth(2)
+                      },
+                      border: TableBorder.all(color: Colors.black12),
+                      children: [
+                        buildDataRow("Yaw2 (°)", yaw2),
+                        buildDataRow("Pitch2 (°)", pitch2),
+                        buildDataRow("Roll2 (°)", roll2),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+                    const Text("Ângulo do joelho (°):",
+                        style: TextStyle(
+                            fontSize: 20, fontWeight: FontWeight.w600)),
+                    const SizedBox(height: 8),
+                    Text(
+                      kneeAngle != null ? kneeAngle!.toStringAsFixed(2) : '---',
+                      style: const TextStyle(
+                          fontSize: 24, fontWeight: FontWeight.bold),
                     ),
                   ],
                 ]),
